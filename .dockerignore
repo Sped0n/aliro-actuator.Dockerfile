@@ -1,0 +1,7 @@
+*
+!Dockerfile
+!check_image.py
+!patches/*.patch
+!requirements.txt
+!vendor/ucitool-2.0.4-py3-none-any.whl
+!vendor/ALIRO_IOT_SR150_FW_v46.43.14.bin

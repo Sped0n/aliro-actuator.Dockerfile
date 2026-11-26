@@ -1,0 +1,34 @@
+Use the image's installed config path on Linux. Do not link the upstream
+ConfigPathProvider, which is marked NXP Confidential.
+
+--- a/Makefile.am
++++ b/Makefile.am
+@@ -60,7 +60,6 @@
+ 
+ LIBNFC_NCI_SOURCE := \
+ 	src/android/utility/base/file.cpp \
+-	src/libnfc-utils/src/ConfigPathProvider.cc \
+ 	src/nxp_nci_hal_libnfc-nci/src/nfa/rw/nfa_rw_main.cc \
+ 	src/nxp_nci_hal_libnfc-nci/src/nfa/rw/nfa_rw_api.cc \
+ 	src/nxp_nci_hal_libnfc-nci/src/nfa/rw/nfa_rw_act.cc \
+--- a/src/nxp_nci_hal_libnfc-nci/src/adaptation/nfc_config.cc
++++ b/src/nxp_nci_hal_libnfc-nci/src/adaptation/nfc_config.cc
+@@ -43,9 +43,6 @@
+ 
+ #include <config.h>
+ #include<sys/stat.h>
+-#ifndef ANDROID
+-#include "configPathProvider.h"
+-#endif
+ using namespace ::std;
+ #ifdef ANDROID
+ using namespace ::android::base;
+@@ -73,7 +70,7 @@
+ // 3. If none of 1,2 is defined, search a default file name "libnfc-nci.conf".
+ #ifndef ANDROID
+ std::string findConfigPath() {
+-  return cfgPathProvider.getFilePath(SYSTEM_CONFIG);
++  return CONFIG_PATH "libnfc-nci.conf";
+ }
+ #else
+ std::string findConfigPath() {
