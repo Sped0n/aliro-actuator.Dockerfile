@@ -1,0 +1,611 @@
+diff --git a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltI2cTransport.cc b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltI2cTransport.cc
+index 5a7650286e7e75850ceca0b1ac377a4f75fae348..6cfeaedbb9c1370f28c6a60b418a24b3863df8c7 100644
+--- a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltI2cTransport.cc
++++ b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltI2cTransport.cc
+@@ -53,12 +53,9 @@ NFCSTATUS NfccAltI2cTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   NXPLOG_TML_D("%s Enter", __func__);
+   NXPLOG_TML_D("phTmlNfc_i2c_open_and_configure Alternative NFC\n");
+   NXPLOG_TML_D("NFC - Assign IO pins\n");
+-  int status_value = -1;
+   int Fd = -1;
+   // Assign IO pins
+-  status_value = ConfigurePin();
+-  if(status_value == -1)
+-    return NFCSTATUS_INVALID_DEVICE;
++  if (ConfigurePin() != NFCSTATUS_SUCCESS) return NFCSTATUS_INVALID_DEVICE;
+   NXPLOG_TML_D("NFCHW - open I2C bus - %s\n", I2C_BUS);
+ 
+   // I2C bus
+@@ -68,18 +65,22 @@ NFCSTATUS NfccAltI2cTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+     Close(NULL);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+-  *pLinkHandle = (void*)((intptr_t)Fd);
++  void* handle = (void*)((intptr_t)Fd);
+   NXPLOG_TML_D("NFC - open I2C device - 0x%02x\n", I2C_ADDRESS);
+ 
+   // I2C slave address
+   if (ioctl(Fd, I2C_SLAVE, I2C_ADDRESS) < 0) {
+     NXPLOG_TML_E("Cannot select I2C address (%s)\n", strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+ 
+-  NfccReset((void*)((intptr_t)Fd), MODE_POWER_OFF);
+-  NfccReset((void*)((intptr_t)Fd), MODE_POWER_ON);
++  if (NfccReset(handle, MODE_POWER_OFF) < 0 ||
++      NfccReset(handle, MODE_POWER_ON) < 0) {
++    Close(handle);
++    return NFCSTATUS_INVALID_DEVICE;
++  }
++  *pLinkHandle = handle;
+ 
+   NXPLOG_TML_D("%s exit", __func__);
+   return NFCSTATUS_SUCCESS;
+@@ -140,7 +141,7 @@ int NfccAltI2cTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+     NXPLOG_TML_E("i2c select() Timeout");
+     return -1;
+   } else {
+-    wait4interrupt();
++    if (!WaitForIrq()) return -1;
+     ret_Read = read((intptr_t)pDevHandle, pBuffer, totalBtyesToRead - numRead);
+     if (ret_Read > 0) {
+       numRead += ret_Read;
+@@ -159,7 +160,7 @@ int NfccAltI2cTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+     }
+ 
+     if (numRead < totalBtyesToRead) {
+-      wait4interrupt();
++      if (!WaitForIrq()) return -1;
+       ret_Read =
+           read((intptr_t)pDevHandle, pBuffer, totalBtyesToRead - numRead);
+       if (ret_Read != totalBtyesToRead - numRead) {
+@@ -176,7 +177,7 @@ int NfccAltI2cTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+       totalBtyesToRead =
+           pBuffer[NORMAL_MODE_LEN_OFFSET] + NORMAL_MODE_HEADER_LEN;
+     }
+-    wait4interrupt();
++    if (!WaitForIrq()) return -1;
+     ret_Read = read((intptr_t)pDevHandle, (pBuffer + numRead),
+                     totalBtyesToRead - numRead);
+     if (ret_Read > 0) {
+@@ -275,9 +276,7 @@ void NfccAltI2cTransport::Close(void* pDevHandle) {
+   if (NULL != pDevHandle) {
+     close((intptr_t)pDevHandle);
+   }
+-  if (iEnableFd) close(iEnableFd);
+-  if (iInterruptFd) close(iInterruptFd);
+-  if (iFwDnldFd) close(iFwDnldFd);
++  ReleasePins();
+   NXPLOG_TML_D("%s exit", __func__);
+   return;
+ }
+diff --git a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltSpiTransport.cc b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltSpiTransport.cc
+index 4ee80464a00abc28856301a83ae2237abf542a4b..a046f6b2517f8e3895f5ae0c027a2e0cf3f993c2 100644
+--- a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltSpiTransport.cc
++++ b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltSpiTransport.cc
+@@ -64,9 +64,7 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   unsigned char spi_bitsPerWord = 8;
+   static uint32_t speed = SPI_BUS_SPEED;
+   // Assign IO pins
+-  status_value = ConfigurePin();
+-  if(status_value == -1)
+-    return NFCSTATUS_INVALID_DEVICE;
++  if (ConfigurePin() != NFCSTATUS_SUCCESS) return NFCSTATUS_INVALID_DEVICE;
+   NXPLOG_TML_D("NFCHW - open SPI bus - %s\n", SPI_BUS);
+ 
+   // SPI bus
+@@ -76,7 +74,7 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+     Close(NULL);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+-  *pLinkHandle = (void*)((intptr_t)Fd);
++  void* handle = (void*)((intptr_t)Fd);
+   NXPLOG_TML_D("NFC - open SPI device\n");
+ 
+   // set and get spi mode
+@@ -84,14 +82,14 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   if (status_value < 0) {
+     NXPLOG_TML_E("Could not set SPIMode (WR)...ioctl fail (%s)\n",
+                  strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+   status_value = ioctl(Fd, SPI_IOC_RD_MODE, &spi_mode);
+   if (status_value < 0) {
+     NXPLOG_TML_E("Could not get SPIMode (RD)...ioctl fail (%s)\n",
+                  strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+   // set and get bits per word
+@@ -99,7 +97,7 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   if (status_value < 0) {
+     NXPLOG_TML_E("Could not set SPI bitsPerWord (WR)...ioctl fail (%s)\n",
+                  strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+ 
+@@ -107,7 +105,7 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   if (status_value < 0) {
+     NXPLOG_TML_E("Could not set SPI bitsPerWord (RD)...ioctl fail (%s)\n",
+                  strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+ 
+@@ -116,12 +114,16 @@ NFCSTATUS NfccAltSpiTransport::OpenAndConfigure(pphTmlNfc_Config_t pConfig,
+   if (status_value < 0) {
+     NXPLOG_TML_E("Could not set SPI max speed (WR)...ioctl fail (%s)\n",
+                  strerror(errno));
+-    Close(pLinkHandle);
++    Close(handle);
+     return (NFCSTATUS_INVALID_DEVICE);
+   }
+ 
+-  NfccReset((void*)((intptr_t)Fd), MODE_POWER_OFF);
+-  NfccReset((void*)((intptr_t)Fd), MODE_POWER_ON);
++  if (NfccReset(handle, MODE_POWER_OFF) < 0 ||
++      NfccReset(handle, MODE_POWER_ON) < 0) {
++    Close(handle);
++    return NFCSTATUS_INVALID_DEVICE;
++  }
++  *pLinkHandle = handle;
+ 
+   NXPLOG_TML_D("%s exit", __func__);
+   return NFCSTATUS_SUCCESS;
+@@ -232,7 +234,7 @@ int NfccAltSpiTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+     NXPLOG_TML_E("spi select() Timeout");
+     return -1;
+   } else {
+-    wait4interrupt();
++    if (!WaitForIrq()) return -1;
+     ret_Read =
+         SpiRead((intptr_t)pDevHandle, pBuffer, totalBtyesToRead - numRead);
+     if (ret_Read > 0) {
+@@ -256,7 +258,7 @@ int NfccAltSpiTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+     }
+ 
+     if (numRead < totalBtyesToRead) {
+-      wait4interrupt();
++      if (!WaitForIrq()) return -1;
+       ret_Read =
+           SpiRead((intptr_t)pDevHandle, pBuffer, totalBtyesToRead - numRead);
+       if (ret_Read != totalBtyesToRead - numRead) {
+@@ -273,7 +275,7 @@ int NfccAltSpiTransport::Read(void* pDevHandle, uint8_t* pBuffer,
+       totalBtyesToRead =
+           pBuffer[NORMAL_MODE_LEN_OFFSET] + NORMAL_MODE_HEADER_LEN;
+     }
+-    wait4interrupt();
++    if (!WaitForIrq()) return -1;
+     ret_Read = SpiRead((intptr_t)pDevHandle, (pBuffer + numRead),
+                        totalBtyesToRead - numRead);
+     if (ret_Read > 0) {
+@@ -393,9 +395,7 @@ void NfccAltSpiTransport::Close(void* pDevHandle) {
+   if (NULL != pDevHandle) {
+     close((intptr_t)pDevHandle);
+   }
+-  if (iEnableFd) close(iEnableFd);
+-  if (iInterruptFd) close(iInterruptFd);
+-  if (iFwDnldFd) close(iFwDnldFd);
++  ReleasePins();
+   NXPLOG_TML_D("%s exit", __func__);
+   return;
+ }
+diff --git a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.cc b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.cc
+index efad1b6e921feb38d70082ac7d86a3fdb9535d7e..87df5ae2f1cc0af1d5d5ff5f2a0941aae5f2c2a0 100644
+--- a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.cc
++++ b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.cc
+@@ -20,6 +20,7 @@
+ #ifdef ANDROID
+ #include <hardware/nfc.h>
+ #endif
++#include <linux/gpio.h>
+ #include <stdlib.h>
+ #include <sys/ioctl.h>
+ #include <sys/select.h>
+@@ -41,10 +42,12 @@
+ extern phTmlNfc_i2cfragmentation_t fragmentation_enabled;
+ extern phTmlNfc_Context_t* gpphTmlNfc_Context;
+ 
+-NfccAltTransport::NfccAltTransport() {
+-  iEnableFd = 0;
+-  iInterruptFd = 0;
+-}
++static constexpr char kGpioChipPath[] = "/dev/gpiochip0";
++static constexpr int kIrqTimeoutMs = 2000;
++// Request masks index the offsets array, not the GPIO numbers.
++static constexpr uint64_t kIrqMask = 1u << 0;
++static constexpr uint64_t kVenMask = 1u << 1;
++static constexpr uint64_t kFwDownloadMask = 1u << 2;
+ 
+ /*******************************************************************************
+ **
+@@ -98,7 +101,7 @@ int NfccAltTransport::Flushdata(void* pDevHandle, uint8_t* pBuffer,
+ **
+ *******************************************************************************/
+ int NfccAltTransport::NfccReset(void* pDevHandle, NfccResetType eType) {
+-  int ret = -1;
++  bool pinsSet = false;
+   NXPLOG_TML_D("%s, VEN eType %ld", __func__, eType);
+ 
+   if (NULL == pDevHandle) {
+@@ -106,40 +109,31 @@ int NfccAltTransport::NfccReset(void* pDevHandle, NfccResetType eType) {
+   }
+   switch (eType) {
+     case MODE_POWER_OFF:
+-      gpio_set_fwdl(0);
+-      gpio_set_ven(0);
++      pinsSet = SetPin(kFwDownloadMask, false) && SetPin(kVenMask, false);
+       break;
+     case MODE_POWER_ON:
+-      gpio_set_fwdl(0);
+-      gpio_set_ven(1);
++      pinsSet = SetPin(kFwDownloadMask, false) && SetPin(kVenMask, true);
+       break;
+     case MODE_FW_DWNLD_WITH_VEN:
+-      gpio_set_fwdl(1);
+-      gpio_set_ven(0);
+-      gpio_set_ven(1);
++      pinsSet = SetPin(kFwDownloadMask, true) && SetPin(kVenMask, false) &&
++                SetPin(kVenMask, true);
+       break;
+     case MODE_FW_DWND_HIGH:
+-      gpio_set_fwdl(1);
++      pinsSet = SetPin(kFwDownloadMask, true);
+       break;
+     case MODE_POWER_RESET:
+-      gpio_set_ven(0);
+-      gpio_set_ven(1);
++      pinsSet = SetPin(kVenMask, false) && SetPin(kVenMask, true);
+       break;
+     case MODE_FW_GPIO_LOW:
+-      gpio_set_fwdl(0);
++      pinsSet = SetPin(kFwDownloadMask, false);
+       break;
+     default:
+       NXPLOG_TML_E("%s, VEN eType %ld", __func__, eType);
+       return -1;
+   }
+-  if ((eType != MODE_FW_DWNLD_WITH_VEN) && (eType != MODE_FW_DWND_HIGH)) {
+-    EnableFwDnldMode(false);
+-  }
+-  if ((eType == MODE_FW_DWNLD_WITH_VEN) || (eType == MODE_FW_DWND_HIGH)) {
+-    EnableFwDnldMode(true);
+-  }
+-
+-  return ret;
++  if (!pinsSet) return -1;
++  EnableFwDnldMode(eType == MODE_FW_DWNLD_WITH_VEN || eType == MODE_FW_DWND_HIGH);
++  return 0;
+ }
+ 
+ /*******************************************************************************
+@@ -247,206 +241,92 @@ int NfccAltTransport::SemTimedWait() {
+ **                  In the case of IOCTL error, it returns -ve value.
+ **
+ *******************************************************************************/
+-int NfccAltTransport::GetIrqState(void* pDevHandle) {
+-  int ret = -1;
+-
+-  NXPLOG_TML_D("%s Enter", __func__);
+-  int len;
+-  char buf[2];
+-
+-  if (iInterruptFd <= 0) {
+-    NXPLOG_TML_E("Error with interrupt-detect pin (%d)", iInterruptFd);
+-    return (-1);
+-  }
+-
+-  // Seek to the start of the file
+-  lseek(iInterruptFd, SEEK_SET, 0);
+-
+-  // Read the field_detect line
+-  len = read(iInterruptFd, buf, 2);
+-
+-  if (len != 2) {
+-    NXPLOG_TML_E("Error with interrupt-detect pin (%s)", strerror(errno));
+-    return (0);
++int NfccAltTransport::GetIrqState(void* /*pDevHandle*/) {
++  gpio_v2_line_values values = {};
++  values.mask = kIrqMask;
++  if (ioctl(gpioRequestFd, GPIO_V2_LINE_GET_VALUES_IOCTL, &values) < 0) {
++    NXPLOG_TML_E("Cannot read PN7160 IRQ: %s", strerror(errno));
++    return -1;
+   }
+-
+-  NXPLOG_TML_D("%s exit: state = %d", __func__, (buf[0] != '0'));
+-  return (buf[0] != '0');
++  return (values.bits & kIrqMask) != 0;
+ }
+ 
+-int NfccAltTransport::verifyPin(int pin, int isoutput, int edge) {
+-  char buf[40];
+-  // Check if gpio pin has already been created
+-  int hasGpio = 0;
+-  NXPLOG_TML_D("%s Enter", __func__);
+-  sprintf(buf, "/sys/class/gpio/gpio%d", pin);
+-  NXPLOG_TML_D("Pin %s\n", buf);
+-  int fd = open(buf, O_RDONLY);
+-  if (fd <= 0) {
+-    // Pin not exported yet
+-    NXPLOG_TML_D("Create pin %s\n", buf);
+-    if ((fd = open("/sys/class/gpio/export", O_WRONLY)) > 0) {
+-      sprintf(buf, "%d", pin);
+-      if (write(fd, buf, strlen(buf)) == strlen(buf)) {
+-        hasGpio = 1;
+-        usleep(100 * 1000);
+-      }
+-    } else {
+-      NXPLOG_TML_E("open failed for /sys/class/gpio/export\n");
+-      return -1;
+-    }
+-  } else {
+-    NXPLOG_TML_E("System already has pin %s\n", buf);
+-    hasGpio = 1;
++bool NfccAltTransport::SetPin(uint64_t mask, bool high) {
++  gpio_v2_line_values values = {};
++  values.mask = mask;
++  values.bits = high ? mask : 0;
++  if (ioctl(gpioRequestFd, GPIO_V2_LINE_SET_VALUES_IOCTL, &values) < 0) {
++    NXPLOG_TML_E("Cannot set PN7160 GPIO: %s", strerror(errno));
++    return false;
+   }
+-  close(fd);
+-
+-  if (hasGpio) {
+-    // Make sure it is an output
+-    sprintf(buf, "/sys/class/gpio/gpio%d/direction", pin);
+-    NXPLOG_TML_D("Direction %s\n", buf);
+-    fd = open(buf, O_WRONLY);
+-    if (fd <= 0) {
+-      NXPLOG_TML_E("Could not open direction port '%s' (%s)", buf,
+-                   strerror(errno));
+-      return -1;
+-    } else {
+-      if (isoutput) {
+-        if (write(fd, "out", 3) == 3) {
+-          NXPLOG_TML_D("Pin %d now an output\n", pin);
+-        }
+-        close(fd);
+-
+-        // Open pin and make sure it is off
+-        sprintf(buf, "/sys/class/gpio/gpio%d/value", pin);
+-        fd = open(buf, O_RDWR);
+-        if (fd <= 0) {
+-        }
+-        close(fd);
++  usleep(10 * 1000);
++  return true;
++}
+ 
+-        // Open pin and make sure it is off
+-        sprintf(buf, "/sys/class/gpio/gpio%d/value", pin);
+-        fd = open(buf, O_RDWR);
+-        if (fd <= 0) {
+-          NXPLOG_TML_E("Could not open value port '%s' (%s)", buf,
+-                       strerror(errno));
+-          return -1;
+-        } else {
+-          if (write(fd, "0", 1) == 1) {
+-            NXPLOG_TML_D("Pin %d now off\n", pin);
+-          }
+-          return (fd);  // Success
+-        }
+-      } else {
+-        if (write(fd, "in", 2) == 2) {
+-          NXPLOG_TML_D("Pin %d now an input\n", pin);
+-        }
+-        close(fd);
++bool NfccAltTransport::WaitForIrq() {
++  pollfd irq = {gpioRequestFd, POLLIN, 0};
++  for (;;) {
++    // IRQ stays high while data is pending, even if its edge was already read.
++    const int level = GetIrqState(nullptr);
++    if (level != 0) return level > 0;
+ 
+-        if (edge != EDGE_NONE) {
+-          // Open pin edge control
+-          sprintf(buf, "/sys/class/gpio/gpio%d/edge", pin);
+-          NXPLOG_TML_D("Edge %s\n", buf);
+-          fd = open(buf, O_RDWR);
+-          if (fd <= 0) {
+-            NXPLOG_TML_E("Could not open edge port '%s' (%s)", buf,
+-                         strerror(errno));
+-            return -1;
+-          } else {
+-            char* edge_str = "none";
+-            switch (edge) {
+-              case EDGE_RISING:
+-                edge_str = "rising";
+-                break;
+-              case EDGE_FALLING:
+-                edge_str = "falling";
+-                break;
+-              case EDGE_BOTH:
+-                edge_str = "both";
+-                break;
+-            }
+-            int l = strlen(edge_str);
+-            NXPLOG_TML_D("Edge-string %s - %d\n", edge_str, l);
+-            if (write(fd, edge_str, l) == l) {
+-              NXPLOG_TML_D("Pin %d trigger on %s\n", pin, edge_str);
+-            }
+-            close(fd);
+-          }
+-        }
++    // Bound the idle wait so TML can retry or join the reader on shutdown.
++    const int ready = poll(&irq, 1, kIrqTimeoutMs);
++    if (ready < 0 && errno == EINTR) continue;
++    if (ready <= 0 || !(irq.revents & POLLIN)) return false;
+ 
+-        // Open pin
+-        sprintf(buf, "/sys/class/gpio/gpio%d/value", pin);
+-        NXPLOG_TML_D("Value %s\n", buf);
+-        fd = open(buf, O_RDONLY);
+-        if (fd <= 0) {
+-          NXPLOG_TML_E("Could not open value port '%s' (%s)", buf,
+-                       strerror(errno));
+-          return -1;
+-        } else {
+-          return (fd);  // Success
+-        }
+-      }
+-    }
++    gpio_v2_line_event event;
++    const ssize_t length = read(gpioRequestFd, &event, sizeof(event));
++    if (length < 0 && errno == EINTR) continue;
++    if (length != sizeof(event)) return false;
+   }
+-  return (0);
+ }
+-void NfccAltTransport::gpio_set_ven(int value) {
+-  if (iEnableFd > 0) {
+-    if (value == 0) {
+-      write(iEnableFd, "0", 1);
+-    } else {
+-      write(iEnableFd, "1", 1);
+-    }
+-    usleep(10 * 1000);
++
++int NfccAltTransport::ConfigurePin() {
++  const int chipFd = open(kGpioChipPath, O_RDONLY | O_CLOEXEC);
++  if (chipFd < 0) {
++    NXPLOG_TML_E("Cannot open %s: %s", kGpioChipPath, strerror(errno));
++    return NFCSTATUS_INVALID_DEVICE;
+   }
+-}
+ 
+-void NfccAltTransport::gpio_set_fwdl(int value) {
+-  if (iFwDnldFd > 0) {
+-    if (value == 0) {
+-      write(iFwDnldFd, "0", 1);
+-    } else {
+-      write(iFwDnldFd, "1", 1);
+-    }
+-    usleep(10 * 1000);
++  gpiochip_info chip = {};
++  if (ioctl(chipFd, GPIO_GET_CHIPINFO_IOCTL, &chip) < 0 ||
++      strcmp(chip.label, "pinctrl-bcm2711") != 0) {
++    NXPLOG_TML_E("%s must be the Raspberry Pi 4 header GPIO controller",
++                 kGpioChipPath);
++    close(chipFd);
++    return NFCSTATUS_INVALID_DEVICE;
+   }
+-}
+ 
+-void NfccAltTransport::wait4interrupt(void) {
+-  /* Open STREAMS device. */
+-  struct pollfd fds[1];
+-  fds[0].fd = iInterruptFd;
+-  fds[0].events = POLLPRI;
+-  int timeout_msecs = -1;  // 100000;
+-  int ret;
+-  // usleep(500000);
+-  while (!GetIrqState(NULL)) {
+-    // Wait for an edge on the GPIO pin to get woken up
+-    ret = poll(fds, 1, timeout_msecs);
+-    if (ret != 1) {
+-      NXPLOG_TML_D("wait4interrupt() %d - %s, ", ret, strerror(errno));
+-    }
++  gpio_v2_line_request request = {};
++  request.offsets[0] = PIN_INT;
++  request.offsets[1] = PIN_ENABLE;
++  request.offsets[2] = PIN_FWDNLD;
++  request.num_lines = 3;
++  memcpy(request.consumer, "pn7160", sizeof("pn7160"));
++  request.config.flags = GPIO_V2_LINE_FLAG_OUTPUT;
++  request.config.num_attrs = 2;
++  request.config.attrs[0].mask = kIrqMask;
++  request.config.attrs[0].attr.id = GPIO_V2_LINE_ATTR_ID_FLAGS;
++  request.config.attrs[0].attr.flags = GPIO_V2_LINE_FLAG_INPUT |
++                                      GPIO_V2_LINE_FLAG_EDGE_RISING;
++  request.config.attrs[1].mask = kVenMask | kFwDownloadMask;
++  request.config.attrs[1].attr.id = GPIO_V2_LINE_ATTR_ID_OUTPUT_VALUES;
++  request.config.attrs[1].attr.values = 0;
++  const int result = ioctl(chipFd, GPIO_V2_GET_LINE_IOCTL, &request);
++  if (result < 0) {
++    NXPLOG_TML_E("Cannot request PN7160 lines on %s (GPIO v2): %s",
++                 kGpioChipPath, strerror(errno));
+   }
++  close(chipFd);
++  if (result < 0) return NFCSTATUS_INVALID_DEVICE;
++  gpioRequestFd = request.fd;
++  return NFCSTATUS_SUCCESS;
+ }
+ 
+-/*****************************************************************************
+-   **
+-   ** Function         ConfigurePin
+-   **
+-   ** Description      Configure Pins such as IRQ, VEN, Firmware Download
+-   **
+-   ** Parameters       none
+-   **
+-   ** Returns           NFCSTATUS_SUCCESS - on Success/ -1 on Failure
+-   ****************************************************************************/
+-int NfccAltTransport::ConfigurePin()
+-{
+-  // Assign IO pins
+-  iInterruptFd = verifyPin(PIN_INT, 0, EDGE_RISING);
+-  if (iInterruptFd < 0) return (NFCSTATUS_INVALID_DEVICE);
+-  iEnableFd = verifyPin(PIN_ENABLE, 1, EDGE_NONE);
+-  if (iEnableFd < 0) return (NFCSTATUS_INVALID_DEVICE);
+-  iFwDnldFd = verifyPin(PIN_FWDNLD, 1, EDGE_NONE);
+-  if (iFwDnldFd < 0) return (NFCSTATUS_INVALID_DEVICE);
+-  return NFCSTATUS_SUCCESS;
++void NfccAltTransport::ReleasePins() {
++  if (gpioRequestFd >= 0) {
++    close(gpioRequestFd);
++    gpioRequestFd = -1;
++  }
+ }
+diff --git a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.h b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.h
+index 4278d459f064f0be503e672126a529e4ee98d099..741a0e8017bd215e597252c01791c04565535419 100755
+--- a/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.h
++++ b/src/nfcandroid_nfc_hidlimpl/halimpl/tml/transport/NfccAltTransport.h
+@@ -28,10 +28,6 @@
+ #define PIN_INT 23
+ #define PIN_ENABLE 24
+ #define PIN_FWDNLD 25
+-#define EDGE_NONE 0
+-#define EDGE_RISING 1
+-#define EDGE_FALLING 2
+-#define EDGE_BOTH 3
+ #define CRC_LEN 2
+ #define NORMAL_MODE_HEADER_LEN 3
+ #define FW_DNLD_HEADER_LEN 2
+@@ -41,19 +37,17 @@
+ extern phTmlNfc_i2cfragmentation_t fragmentation_enabled;
+ 
+ class NfccAltTransport : public NfccTransport {
++ private:
++  int gpioRequestFd = -1;
++  bool SetPin(uint64_t mask, bool high);
++
++ protected:
++  bool WaitForIrq();
++  void ReleasePins();
++
+  public:
+-  NfccAltTransport();
+   bool_t bFwDnldFlag = false;
+   sem_t mTxRxSemaphore;
+-  int iEnableFd;
+-  int iInterruptFd;
+-  int iFwDnldFd;
+-
+- public:
+-  void gpio_set_ven(int value);
+-  void gpio_set_fwdl(int value);
+-  int verifyPin(int pin, int isoutput, int edge);
+-  void wait4interrupt(void);
+   int SemTimedWait();
+   void SemPost();
+   int Flushdata(void* pDevHandle, uint8_t* pBuffer, int numRead);

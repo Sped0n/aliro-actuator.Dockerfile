@@ -11,23 +11,9 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-      # Docker's default AppArmor profile blocks writes to the GPIO attributes.
-      - apparmor=unconfined
     devices:
       - /dev/i2c-1:/dev/i2c-1:rw
-    volumes:
-      - type: bind
-        source: /sys/class/gpio/gpio23
-        target: /sys/class/gpio/gpio23
-        bind: {create_host_path: false}
-      - type: bind
-        source: /sys/class/gpio/gpio24
-        target: /sys/class/gpio/gpio24
-        bind: {create_host_path: false}
-      - type: bind
-        source: /sys/class/gpio/gpio25
-        target: /sys/class/gpio/gpio25
-        bind: {create_host_path: false}
+      - /dev/gpiochip0:/dev/gpiochip0:rw
 
   ble-uwb:
     <<: *image

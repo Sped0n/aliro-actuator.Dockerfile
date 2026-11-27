@@ -22,7 +22,7 @@ Build one image for both services. Choose one command:
 # Build from source.
 docker build --tag aliro-actuator:local .
 
-# Or reuse the published base with the PN7160 driver already built.
+# Or reuse a published base that includes the PN7160 GPIO v2 patch.
 # Run docker login ghcr.io first if the package is private.
 docker build --tag aliro-actuator:local \
   --build-context base=docker-image://ghcr.io/sped0n/aliro-actuator:latest .
@@ -32,9 +32,9 @@ docker build --tag aliro-actuator:local \
 
 Stop any host process using the hardware. Choose a service:
 
-| Service   | Host setup                                                                                                                                                                                                                                                                                                    |
-| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `nfc`     | Enable `/dev/i2c-1`. The Pi 4 header controller must use legacy sysfs GPIO with base `0`. Wire PN7160 interrupt to GPIO 23, enable to GPIO 24, and firmware download to GPIO 25. Run `sudo sh prepare-nfc.sh` after each reboot.                                                                              |
+| Service | Host setup |
+| --- | --- |
+| `nfc` | Enable `/dev/i2c-1`. Use a Pi 4 with GPIO character-device API v2 (Linux 5.10 or later). Wire PN7160 interrupt to GPIO 23, enable to GPIO 24, and firmware download to GPIO 25. If the header controller (`pinctrl-bcm2711`) is not at `/dev/gpiochip0`, change the host side of its mapping in `compose.yml`. |
 | `ble-uwb` | Follow the [Murata board firmware setup](https://github.com/aliro-access-control/aliro-actuator/blob/4e501e6474be3be3b79be97295478eaedf35db3b/third_party/readme.md) before use. If the adapter is not at `/dev/ttyUSB0`, change the host path in `compose.yml`. Start a new container after reconnecting it. |
 
 ```sh
@@ -45,7 +45,7 @@ docker compose run --rm nfc
 docker compose run --rm ble-uwb
 ```
 
-- The `nfc` service disables AppArmor for GPIO writes. It runs without network access, Linux capabilities, or privileged mode. The driver can update PN7160 firmware on startup.
+- If you previously exported the NFC pins through sysfs, reboot before switching to the new image so the driver can claim them. The driver can update PN7160 firmware on startup.
 - To check the Murata serial link, run `docker compose run --rm ble-uwb -m examples.uwb.uci_example`. The example can upload SR150 firmware if the chip is not in UCI mode.
 
 ### Run your own script
